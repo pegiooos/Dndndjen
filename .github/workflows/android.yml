@@ -1,0 +1,65 @@
+name: Build EmuHost APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find project (unzip EmuHost.zip if needed)
+        id: proj
+        run: |
+          if [ -z "$(find . -name settings.gradle.kts -not -path '*/.gradle/*' | head -1)" ] && [ -f EmuHost.zip ]; then
+            unzip -q EmuHost.zip
+          fi
+          SETTINGS=$(find . -name settings.gradle.kts -not -path '*/.gradle/*' | head -1)
+          if [ -z "$SETTINGS" ]; then
+            echo "No settings.gradle.kts found" && exit 1
+          fi
+          DIR=$(dirname "$SETTINGS")
+          echo "Project dir: $DIR"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure gradle.properties
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          if [ ! -f gradle.properties ]; then
+            printf 'android.useAndroidX=true\nandroid.nonTransitiveRClass=true\norg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8\nkotlin.code.style=official\n' > gradle.properties
+          fi
+          grep -q 'android.useAndroidX' gradle.properties || echo 'android.useAndroidX=true' >> gradle.properties
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licenses and install platform
+        run: |
+          SDKMAN="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMAN" ]; then
+            yes | "$SDKMAN" --licenses > /dev/null || true
+            "$SDKMAN" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          else
+            echo "sdkmanager not found, relying on preinstalled SDK"
+          fi
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: EmuHost-debug
+          path: '**/app/build/outputs/apk/debug/*.apk'
